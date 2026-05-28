@@ -1,14 +1,14 @@
-//! 阈值 EdDSA 的份额轮换 (reshare). *人数与门限不变*, 旧份额可丢失.
+//! Threshold EdDSA share rotation (reshare). Player set and threshold unchanged.
 //!
-//! 协议形状与 [`svarog_ecdsa_otmta::reshare`] 完全对齐:
-//! * Round 0a (广播) 存活宣告. 持有旧份额者顺带广播 `expected_pk` 与
-//!   `chain_code` (从自己 `Keystore` 字段计算).
-//! * Round 0b (P2P) active producer 把 $\lambda_i x_i$ 随机加性 split 成
-//!   $N$ 份, 第 $k$ 份发给 party $k$.
-//! * 之后转交标准 [`crate::keygen`], 用 `imported_ui = $ 收到 splits 之和 $`
-//!   绑定多项式常数项, `chain_code` 沿用. 末尾比对聚合公钥与共识 PK.
+//! Protocol shape matches [`svarog_ecdsa_otmta::reshare`]:
+//! * Round 0a (broadcast) alive announcement. Active producers also broadcast
+//!   `expected_pk` and `chain_code` (from their `Keystore`).
+//! * Round 0b (P2P) active producers randomly split $\lambda_i x_i$ into
+//!   $N$ additive shares, sending the $k$-th share to party $k$.
+//! * Then delegate to [`crate::keygen`] with `imported_ui = sum of received splits`,
+//!   preserving `chain_code`. Finally compare aggregated pk against consensus PK.
 //!
-//! lost-share 集合不作参数: 谁在 Round 0a 没声称 `has_share` 即为 lost.
+//! Lost-share set is implicit: whoever does not claim `has_share` in Round 0a is lost.
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,11 +16,10 @@ use curve_abstract::{TrCurve, TrMessenger, TrScalar as _};
 use erreur::*;
 use serde::{Deserialize, Serialize};
 use svarog_curve25519::{Curve25519, Point, Scalar};
-use vss::{Keystore, VerifiableSecretSharing};
+use svarog_lagrange::{Keystore, VerifiableSecretSharing};
 
 use crate::keygen;
 
-/// Round 0a 的存活宣告. `has_share = true` 时 `pk_and_cc` 必为 `Some`.
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct AliveAnnounce {
     has_share: bool,
@@ -42,7 +41,7 @@ pub async fn reshare(
     );
 
     if let Some(ks) = old_keystore {
-        let old_set: HashSet<usize> = ks.shamir.keys().copied().collect();
+        let old_set: HashSet<usize> = ks.vss_scheme.keys().copied().collect();
         assert_throw!(
             old_set == new_players,
             "InvalidArgument",
@@ -61,7 +60,7 @@ pub async fn reshare(
         v
     };
 
-    // ── Round 0a: 存活宣告 + (expected_pk, chain_code) 广播 ─────────────
+    // -- Round 0a: alive announcement + (expected_pk, chain_code) broadcast --
     let my_announce = match old_keystore {
         Some(ks) => AliveAnnounce {
             has_share: true,
@@ -99,7 +98,6 @@ pub async fn reshare(
         )
     );
 
-    // active producers 必须广播一致的 (expected_pk, chain_code).
     let mut consensus: Option<(Point, [u8; 32])> = None;
     for &p in &active_producers {
         let pkc = announces[&p].pk_and_cc.as_ref().ifnone(
@@ -117,7 +115,7 @@ pub async fn reshare(
     }
     let (expected_pk, chain_code) = consensus.unwrap();
 
-    // ── Round 0b: producer 随机 split + P2P 发送 ──────────────────────────
+    // -- Round 0b: producer random split + P2P --
     let mut received_splits: HashMap<usize, Scalar> = HashMap::new();
     let mut my_pieces: HashMap<usize, Scalar> = HashMap::new();
 
@@ -160,17 +158,15 @@ pub async fn reshare(
         .await
         .catch("ExchangeFailed", "reshare Round 0b")?;
 
-    // 多项式常数项 = sum_p (来自 p 的 split).
     let mut ui_scalar = Curve25519::zero().clone();
     for s in received_splits.values() {
         ui_scalar = ui_scalar.add(s);
     }
     let imported_ui = Some(ui_scalar.to_int());
 
-    // ── 复用 keygen, 强制常数项 + 链码 ────────────────────────────────────
+    // -- Reuse keygen with forced constant term + chain code --
     let ks = keygen(chan, sid, new_players, i, th, imported_ui, Some(chain_code)).await?;
 
-    // 比对聚合公钥与共识 PK.
     assert_throw!(
         ks.public_key() == expected_pk,
         "InvalidKeyRefresh",

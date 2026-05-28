@@ -1,25 +1,25 @@
-//! Sparkle 阈值 EdDSA 批量签名 (Curve25519 专属).
+//! Sparkle threshold EdDSA batch signing (Curve25519).
 //!
-//! 3 轮 commit-reveal-respond, 一次跑 N 笔. 对每一笔 (msg, tweak):
-//! 1. 派生子公钥 $\mathrm{pk}^{(s)} = \mathrm{pk} + \nabla x^{(s)} G$, 调整本方 $x_i^{(s)}$.
-//! 2. R1 广播 $H(m, S, R_i)$. R2 揭示 $R_i$. R3 广播
-//!    $z_i = r_i + c\cdot\lambda_i\cdot x_i^{(s)}$, 其中 $c = H(R, \mathrm{pk}, m)$.
-//! 3. 验对方 $z_j G = R_j + (\lambda_j c) X_j$, 聚合 $s = \sum_i z_i$.
+//! 3-round commit-reveal-respond, N messages per batch. For each (msg, tweak):
+//! 1. Derive child public key $\mathrm{pk}^{(s)} = \mathrm{pk} + \nabla x^{(s)} G$, adjust $x_i^{(s)}$.
+//! 2. R1 broadcast $H(m, S, R_i)$. R2 reveal $R_i$. R3 broadcast
+//!    $z_i = r_i + c\cdot\lambda_i\cdot x_i^{(s)}$, where $c = H(R, \mathrm{pk}, m)$.
+//! 3. Verify $z_j G = R_j + (\lambda_j c) X_j$, aggregate $s = \sum_i z_i$.
 //!
-//! 工程加固: $H(m, S, R_i)$ 多带 $(m, S)$ (而非 Sparkle 论文的 $H(R_i)$),
-//! 防 replay; 同一 $R_i$ 在不同会话/不同签名集合下承诺值不同.
+//! Engineering hardening: $H(m, S, R_i)$ includes $(m, S)$ (not just $H(R_i)$ as in the paper),
+//! preventing replay; the same $R_i$ commits differently across sessions/batches.
 
 use std::collections::{HashMap, HashSet};
 
-use commons_lang::{let_immutable, make_map, make_vec, make_vec_with};
 use curve_abstract::{TrMessenger, TrPoint as _, TrScalar as _};
 use erreur::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512, digest::Update};
 use svarog_curve25519::{Curve25519, Point, Scalar};
-use vss::{Keystore, VerifiableSecretSharing};
+use svarog_lagrange::{Keystore, VerifiableSecretSharing};
 
-use crate::AnyhowExt;
+use crate::macros::make_vec_with;
+use crate::{let_immutable, make_map, make_vec};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Signature {
@@ -27,7 +27,6 @@ pub struct Signature {
     pub s: Scalar,
 }
 
-/// 门限批量签名. `offsets[s]` 是第 $s$ 笔的 BIP32 派生偏移, `msgs[s]` 是消息.
 pub async fn sign_batch(
     mut chan: impl TrMessenger,
     sid: String,
@@ -65,7 +64,6 @@ pub async fn sign_batch(
     S.sort();
     let S: Vec<u8> = S.iter().flat_map(|&x| x.to_le_bytes()).collect();
 
-    // 收方索引 key: (j, seq).
     let recv_keys: HashSet<(usize, usize)> = {
         let mut obj = HashSet::new();
         for j in &others {
@@ -76,14 +74,14 @@ pub async fn sign_batch(
         obj
     };
 
-    // 非硬化派生 (per-task tweak).
+    // Non-hardened derivation (per-task tweak).
     let mut child_pk_vec = make_vec!(ntask, Point::default());
     let mut vss_scheme_vec = make_vec!(ntask, HashMap::<usize, Vec<Point>>::new());
     let mut xi_hold = make_vec!(ntask, Scalar::default());
     for seq in 0..ntask {
         let tweak_sk = offsets[seq].clone();
         let child_pk = base_pk.add_gx(&tweak_sk);
-        let mut vss_scheme = keystore.shamir.clone();
+        let mut vss_scheme = keystore.vss_scheme.clone();
         let mut xi = keystore.xi.clone();
         xi = xi.add(&tweak_sk);
 
@@ -97,7 +95,7 @@ pub async fn sign_batch(
     }
     let_immutable!(child_pk_vec, vss_scheme_vec, xi_hold);
 
-    // ── R1 广播 $\mathrm{ComR}_i = H(m, S, R_i)$ ──────────────────────────
+    // -- R1 broadcast $\mathrm{ComR}_i = H(m, S, R_i)$ --
     let ri_hold = make_vec_with(ntask, |_| Scalar::new_rand());
     let Ri_send = make_vec_with(ntask, |seq| Point::new_gx(&ri_hold[seq]));
     let ComRi_send = make_vec_with(ntask, |seq| {
@@ -123,7 +121,7 @@ pub async fn sign_batch(
         .catch("ExchangeFailed", "sign_batch R1 (ComRi)")?;
     let_immutable!(ComRj_recv);
 
-    // ── R2 揭示 $R_i$ ────────────────────────────────────────────────────
+    // -- R2 reveal $R_i$ --
     let mut Rj_recv = make_map!(&recv_keys, Point::default());
     for seq in 0..ntask {
         let val = &Ri_send[seq];
@@ -138,7 +136,6 @@ pub async fn sign_batch(
         .catch("ExchangeFailed", "sign_batch R2 (Ri)")?;
     let_immutable!(Rj_recv);
 
-    // 验承诺.
     for seq in 0..ntask {
         for j in &others {
             let j_idx = &(*j, seq);
@@ -157,7 +154,7 @@ pub async fn sign_batch(
         }
     }
 
-    // 聚合 $R = \sum_j R_j$.
+    // Aggregate $R = \sum_j R_j$.
     let mut R_hold = make_vec!(ntask, Point::default());
     for seq in 0..ntask {
         let R = R_hold.get_mut(seq).unwrap();
@@ -168,7 +165,7 @@ pub async fn sign_batch(
     }
     let_immutable!(R_hold);
 
-    // 挑战 $c = H(R \| \mathrm{pk} \| m)$.
+    // Challenge $c = H(R \| \mathrm{pk} \| m)$.
     let c_hold = make_vec_with(ntask, |seq| {
         let c = Sha512::new()
             .chain(R_hold[seq].to_bytes())
@@ -179,7 +176,7 @@ pub async fn sign_batch(
         Scalar::new_from_bytes(&c)
     });
 
-    // ── R3 广播 $z_i = r_i + c\cdot\lambda_i\cdot x_i$ ───────────────────
+    // -- R3 broadcast $z_i = r_i + c\cdot\lambda_i\cdot x_i$ --
     let lambda_i = Curve25519::lagrange_lambda(my_id, &signers);
     let zi_send = make_vec_with(ntask, |seq| {
         let c = &c_hold[seq];
@@ -201,7 +198,7 @@ pub async fn sign_batch(
         .catch("ExchangeFailed", "sign_batch R3 (zi)")?;
     let_immutable!(zj_recv);
 
-    // 验 $z_j G \stackrel{?}{=} R_j + (\lambda_j c) X_j$.
+    // Verify $z_j G \stackrel{?}{=} R_j + (\lambda_j c) X_j$.
     for j in &others {
         let lambda_j = Curve25519::lagrange_lambda(*j, &signers);
         for seq in 0..ntask {
@@ -219,7 +216,7 @@ pub async fn sign_batch(
         }
     }
 
-    // 聚合 + 本地验签.
+    // Aggregate + local verify.
     let mut sig_vec = Vec::new();
     for seq in 0..ntask {
         let R = R_hold[seq].clone();
@@ -230,7 +227,7 @@ pub async fn sign_batch(
         }
         let sig = Signature { R, s };
         sig.verify(&child_pk_vec[seq], &msgs[seq])
-            .catch_anyhow("EdDSAVerifyFailed", format!("sign_batch: seq {}", seq))?;
+            .catch("EdDSAVerifyFailed", format!("sign_batch: seq {}", seq))?;
         sig_vec.push(sig);
     }
 
@@ -238,8 +235,7 @@ pub async fn sign_batch(
 }
 
 impl Signature {
-    pub fn verify(&self, pk: &Point, m: &[u8]) -> anyhow::Result<()> {
-        use anyhow::ensure;
+    pub fn verify(&self, pk: &Point, m: &[u8]) -> Resultat<()> {
         let c = Sha512::new()
             .chain(self.R.to_bytes())
             .chain(pk.to_bytes())
@@ -249,7 +245,7 @@ impl Signature {
         let c = Scalar::new_from_bytes(&c);
         let lhs = Point::new_gx(&self.s);
         let rhs = self.R.add(&pk.mul_x(&c));
-        ensure!(lhs == rhs, "EdDSA signature verification failed.");
+        assert_throw!(lhs == rhs, "EdDSAVerifyFailed", "EdDSA signature verification failed");
         Ok(())
     }
 

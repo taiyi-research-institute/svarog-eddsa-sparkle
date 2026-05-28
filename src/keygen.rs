@@ -1,35 +1,26 @@
-//! 阈值 EdDSA 的 MPC keygen (Curve25519 专属).
+//! Threshold EdDSA MPC keygen (Curve25519).
 //!
-//! 阶段:
-//! 1. [FiX]     各方广播 Feldman 承诺 $F_i(X) = (g f_i)_0, \ldots, (g f_i)_{t-1}$.
-//! 2. [xij_ct]  通过 DH-AES 加密互发份额 $f_i(j)$. 收到后用 Feldman 验证.
-//! 3. [xi_proof] 对自己的最终份额 $x_i$ 出 DLog 证明并互验.
+//! Stages:
+//! 1. [FiX]      Broadcast Feldman commitments $F_i(X) = (g f_i)_0, \ldots, (g f_i)_{t-1}$.
+//! 2. [xij_ct]   DH-AES encrypted share exchange $f_i(j)$. Verify via Feldman on receipt.
+//! 3. [xi_proof] DLog proof for own final share $x_i$, mutually verified.
 //!
-//! 输出: `vss::Keystore<Curve25519>`.
+//! Output: `svarog_lagrange::Keystore<Curve25519>`.
 
 use std::collections::HashSet;
 
-use commons_lang::make_map;
-use commons_mpc::{AEAD, DLogProof, aes_decrypt, aes_encrypt, dlog_prove, dlog_verify};
 use curve_abstract::{TrCurve, TrMessenger, TrPoint as _, TrScalar as _};
 use erreur::*;
-use rand::RngCore as _;
+use rand::Rng as _;
 use rug::{Integer, integer::Order};
+use sha2::{Digest, Sha512};
 use svarog_curve25519::Curve25519;
-use vss::{Keystore, VerifiableSecretSharing};
+use svarog_lagrange::{Keystore, VerifiableSecretSharing};
 
-use crate::AnyhowExt;
+use crate::aes::{aes_decrypt, aes_encrypt, AEAD};
+use crate::dlog_proof::{DLogProof, dlog_prove, dlog_verify};
+use crate::make_map;
 
-/// 阈值密钥生成.
-///
-/// 参数:
-/// * `chan`        - 消息层.
-/// * `sid`         - 会话 ID.
-/// * `players`     - 全体参与方 ID 集合, 必须含 `i`.
-/// * `i`           - 本方 ID.
-/// * `th`          - 门限.
-/// * `imported_ui` - 可选: 强制本方多项式常数项 (用于 reshare / 助记词导入).
-/// * `chain_code`  - 可选: 强制根链码; 否则由公钥派生.
 pub async fn keygen(
     mut chan: impl TrMessenger,
     sid: String,
@@ -51,7 +42,7 @@ pub async fn keygen(
         val
     };
 
-    // ===== [FiX] 本方多项式 + 承诺 + 互发 =====
+    // ===== [FiX] polynomial + commitments + broadcast =====
     let ui_original = match &imported_ui {
         None => {
             let mut rng = rand::rng();
@@ -62,7 +53,7 @@ pub async fn keygen(
         Some(val) => val.clone(),
     };
     let ui = <Curve25519 as TrCurve>::ScalarT::new_from_int(&ui_original);
-    let (FiX, xij_send) = Curve25519::generate_shares(&ui, &players, th);
+    let (_fiX, FiX, xij_send) = Curve25519::generate_shares(&ui, &players, th);
 
     let mut FjX_recv = make_map!(&players, Vec::<<Curve25519 as TrCurve>::PointT>::new());
     for j in &others {
@@ -92,7 +83,7 @@ pub async fn keygen(
     }
     let pk = pk;
 
-    // ===== [xij_ct] DH-AES 加密互发份额 =====
+    // ===== [xij_ct] DH-AES encrypted share exchange =====
     let mut aes_key_hold = make_map!(&others, Vec::<u8>::new());
     for j in &others {
         let guj = &vss_scheme.get(j).unwrap()[0];
@@ -105,7 +96,7 @@ pub async fn keygen(
         let key = &aes_key_hold[j];
         let xij = xij_send[j].to_bytes();
         let xij_ct = aes_encrypt(key, &xij)
-            .catch_anyhow("AesEncryptFailed", format!("keygen: xij to peer {}", j))?;
+            .catch("AesEncryptFailed", format!("keygen: xij to peer {}", j))?;
 
         let xji = xji_ct_recv_map.get_mut(j).unwrap();
         let _ = chan.register_send(&xij_ct, &sid, "xij_ct", i, *j, 0);
@@ -122,19 +113,19 @@ pub async fn keygen(
         let key = &aes_key_hold[j];
         let xji_ct = &xji_ct_recv_map[j];
         let xji: Vec<u8> = aes_decrypt(key, xji_ct)
-            .catch_anyhow("AesDecryptFailed", format!("keygen: xji from peer {}", j))?;
+            .catch("AesDecryptFailed", format!("keygen: xji from peer {}", j))?;
         let xji = <Curve25519 as TrCurve>::ScalarT::new_from_bytes(&xji);
         let _ = xji_recv.insert(*j, xji);
     }
     Curve25519::verify_fj_at_i(i, &xji_recv, &vss_scheme)
-        .catch_anyhow("FeldmanVerifyFailed", "keygen: f_j(i) * G != F_j(i)")?;
+        .catch("FeldmanVerifyFailed", "keygen: f_j(i) * G != F_j(i)")?;
 
     for j in &others {
         xi = xi.add(&xji_recv[j]);
     }
     drop(xji_ct_recv_map);
 
-    // ===== [xi_proof] 互验 x_i 的 DLog 证明 =====
+    // ===== [xi_proof] mutual DLog proof verification =====
     let (_, xi_proof) = dlog_prove::<Curve25519>(&xi);
     let mut xj_proof_recv = make_map!(&others, DLogProof::<Curve25519>::default());
     for j in &others {
@@ -149,19 +140,20 @@ pub async fn keygen(
         let xj_proof = &xj_proof_recv[j];
         let xjG = Curve25519::eval_xi_com(*j, &vss_scheme);
         dlog_verify(xj_proof, &xjG)
-            .catch_anyhow("InvalidDLogProof", format!("keygen: dishonest peer {}", j))?;
+            .catch("InvalidDLogProof", format!("keygen: dishonest peer {}", j))?;
     }
 
     let chain_code = match chain_code {
         Some(val) => val,
-        None => bip32::compute_chain_code::<Curve25519>(&pk),
+        None => Sha512::digest(pk.to_bytes())[..32].try_into().unwrap(),
     };
 
     Ok(Keystore {
         i,
         ui: ui_original,
         xi,
-        shamir: vss_scheme,
+        vss_scheme,
         chain_code,
+        aux: vec![],
     })
 }
