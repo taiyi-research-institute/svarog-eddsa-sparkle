@@ -11,7 +11,6 @@ use std::collections::HashSet;
 
 use curve_abstract::{TrCurve, TrMessenger, TrPoint as _, TrScalar as _};
 use erreur::*;
-use rand::Rng as _;
 use rug::{Integer, integer::Order};
 use sha2::{Digest, Sha512};
 use svarog_curve25519::Curve25519;
@@ -20,6 +19,7 @@ use svarog_lagrange::{Keystore, VerifiableSecretSharing};
 use crate::aes::{aes_decrypt, aes_encrypt, AEAD};
 use crate::dlog_proof::{DLogProof, dlog_prove, dlog_verify};
 use crate::make_map;
+use crate::rng::fill_random;
 
 pub async fn keygen(
     mut chan: impl TrMessenger,
@@ -45,9 +45,8 @@ pub async fn keygen(
     // ===== [FiX] polynomial + commitments + broadcast =====
     let ui_original = match &imported_ui {
         None => {
-            let mut rng = rand::rng();
             let mut num = [0u8; 32];
-            rng.fill_bytes(&mut num);
+            fill_random(&mut num);
             Integer::from_digits(&num, Order::Msf)
         }
         Some(val) => val.clone(),

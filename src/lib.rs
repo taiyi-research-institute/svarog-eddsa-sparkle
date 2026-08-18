@@ -17,6 +17,7 @@ mod macros;
 
 pub(crate) mod aes;
 pub(crate) mod dlog_proof;
+pub(crate) mod rng;
 
 mod keygen;
 pub use keygen::keygen;

@@ -5,8 +5,9 @@ use aes_gcm::{
 use blake2::Blake2b512;
 use digest::Digest;
 use erreur::*;
-use rand::{Rng as _, rng};
 use serde::{Deserialize, Serialize};
+
+use crate::rng::fill_random;
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
 pub struct AEAD {
@@ -24,7 +25,7 @@ pub fn aes_encrypt(key: &[u8], pt: &[u8]) -> Resultat<AEAD> {
     let aad = Blake2b512::digest(pt).to_vec();
 
     let mut nonce = [0u8; 12];
-    rng().fill_bytes(&mut nonce);
+    fill_random(&mut nonce);
     let nonce = Nonce::from_slice(&nonce);
 
     let payload = Payload { msg: pt, aad: &aad };
