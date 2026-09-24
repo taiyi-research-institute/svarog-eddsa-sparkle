@@ -102,13 +102,19 @@ pub async fn reshare(
     for &p in &active_producers {
         let pkc = announces[&p].pk_and_cc.as_ref().ifnone(
             "MalformedReshareAnnounce",
-            format!("reshare: producer {} announced has_share=true but no pk/cc", p),
+            format!(
+                "reshare: producer {} announced has_share=true but no pk/cc",
+                p
+            ),
         )?;
         match &consensus {
             Some(c) => assert_throw!(
                 c == pkc,
                 "InconsistentReshareAnnounce",
-                format!("reshare: producer {} disagrees with peers on pk/chain_code", p)
+                format!(
+                    "reshare: producer {} disagrees with peers on pk/chain_code",
+                    p
+                )
             ),
             None => consensus = Some(pkc.clone()),
         }
@@ -121,7 +127,7 @@ pub async fn reshare(
 
     if let Some(ks) = old_keystore {
         let lambda_i = Curve25519::lagrange_lambda(i, &active_producers);
-        let xi_scalar = Scalar::new_from_int(&ks.xi.to_int());
+        let xi_scalar = Scalar::new_from_int(ks.xi.to_int());
         let s_i = lambda_i.mul(&xi_scalar);
 
         let mut running = s_i.clone();

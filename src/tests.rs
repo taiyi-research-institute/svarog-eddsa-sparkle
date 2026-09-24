@@ -48,7 +48,9 @@ async fn run_sign(
             let ch = ToyMessenger::new(dbi);
             // 全部 offset = 0, 等价于不做 BIP32 派生.
             let offsets: Vec<Scalar> = (0..msgs_i.len()).map(|_| Scalar::default()).collect();
-            sign_batch(ch, sid_i, sg, &ks, offsets, msgs_i).await.unwrap()
+            sign_batch(ch, sid_i, sg, &ks, offsets, msgs_i)
+                .await
+                .unwrap()
         });
         handles.push(h);
     }

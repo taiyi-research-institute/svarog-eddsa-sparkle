@@ -108,8 +108,7 @@ pub async fn sign_batch(
     });
     let mut ComRj_recv = make_map!(&recv_keys, Vec::<u8>::new());
 
-    for seq in 0..ntask {
-        let val = &ComRi_send[seq];
+    for (seq, val) in ComRi_send.iter().enumerate() {
         let _ = chan.register_send(val, sid, "ComRi", my_id, 0, seq);
         for j in &others {
             let out = ComRj_recv.get_mut(&(*j, seq)).unwrap();
@@ -123,8 +122,7 @@ pub async fn sign_batch(
 
     // -- R2 reveal $R_i$ --
     let mut Rj_recv = make_map!(&recv_keys, Point::default());
-    for seq in 0..ntask {
-        let val = &Ri_send[seq];
+    for (seq, val) in Ri_send.iter().enumerate() {
         let _ = chan.register_send(val, sid, "Ri", my_id, 0, seq);
         for j in &others {
             let out = Rj_recv.get_mut(&(*j, seq)).unwrap();
@@ -136,11 +134,11 @@ pub async fn sign_batch(
         .catch("ExchangeFailed", "sign_batch R2 (Ri)")?;
     let_immutable!(Rj_recv);
 
-    for seq in 0..ntask {
+    for (seq, msg) in msgs.iter().enumerate() {
         for j in &others {
             let j_idx = &(*j, seq);
             let com_eval = Sha512::new()
-                .chain(&msgs[seq])
+                .chain(msg)
                 .chain(&S)
                 .chain(Rj_recv[j_idx].to_bytes())
                 .finalize()
@@ -185,8 +183,7 @@ pub async fn sign_batch(
         ri.add(&c.mul(&lambda_i).mul(xi))
     });
     let mut zj_recv = make_map!(&recv_keys, Scalar::default());
-    for seq in 0..ntask {
-        let val = &zi_send[seq];
+    for (seq, val) in zi_send.iter().enumerate() {
         let _ = chan.register_send(val, sid, "zi", my_id, 0, seq);
         for j in &others {
             let out = zj_recv.get_mut(&(*j, seq)).unwrap();
@@ -245,7 +242,11 @@ impl Signature {
         let c = Scalar::new_from_bytes(&c);
         let lhs = Point::new_gx(&self.s);
         let rhs = self.R.add(&pk.mul_x(&c));
-        assert_throw!(lhs == rhs, "EdDSAVerifyFailed", "EdDSA signature verification failed");
+        assert_throw!(
+            lhs == rhs,
+            "EdDSAVerifyFailed",
+            "EdDSA signature verification failed"
+        );
         Ok(())
     }
 

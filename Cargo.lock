@@ -102,9 +102,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -183,7 +183,8 @@ dependencies = [
 [[package]]
 name = "curve-abstract"
 version = "0.1.0"
-source = "git+https://github.com/taiyi-research-institute/svarog-algebra.git#d4b34f3d4f0024f0426315164f04cf980e95db67"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ebd605498b292af1c733e7df158059ba7ce03d187b7d8872199354a1de81c4e"
 dependencies = [
  "rug",
  "serde",
@@ -787,7 +788,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "svarog-curve25519"
 version = "0.1.0"
-source = "git+https://github.com/taiyi-research-institute/svarog-algebra.git#d4b34f3d4f0024f0426315164f04cf980e95db67"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84fb3275f40c87ee5bc8f44103c4ef4d12bfef63cdf8fb8ccbafc1740759d770"
 dependencies = [
  "curve-abstract",
  "curve25519-dalek",
@@ -821,7 +823,8 @@ dependencies = [
 [[package]]
 name = "svarog-lagrange"
 version = "0.1.0"
-source = "git+https://github.com/taiyi-research-institute/svarog-algebra.git#d4b34f3d4f0024f0426315164f04cf980e95db67"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba4fadd530cf5f42695c710131423f1c43214e4651312417cccc559a33896f68"
 dependencies = [
  "curve-abstract",
  "erreur",

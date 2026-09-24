@@ -1,4 +1,4 @@
-//! `svarog-eddsa`: Sparkle threshold EdDSA (Curve25519).
+//! `svarog-eddsa-sparkle`: Sparkle threshold EdDSA (Curve25519).
 //!
 //! * [`keygen`] - Feldman VSS + DLog proof + AES encrypted share distribution.
 //! * [`sign_batch`] - Sparkle 3-round signing, N messages per batch.
@@ -9,9 +9,9 @@
 #![allow(nonstandard_style)]
 
 #[cfg(test)]
-mod toy_messenger;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod toy_messenger;
 
 mod macros;
 

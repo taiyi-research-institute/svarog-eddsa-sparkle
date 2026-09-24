@@ -40,6 +40,10 @@ where
     let c = C::ScalarT::new_from_bytes(&c);
 
     let rhs = C::PointT::new_gx(&proof.z).sub(&S.mul_x(&c));
-    assert_throw!(proof.rG == rhs, "InvalidDLogProof", "DLog verification failed");
+    assert_throw!(
+        proof.rG == rhs,
+        "InvalidDLogProof",
+        "DLog verification failed"
+    );
     Ok(())
 }

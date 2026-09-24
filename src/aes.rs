@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::rng::fill_random;
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
+// 保留协议消息类型使用的标准密码学缩写。
+#[allow(clippy::upper_case_acronyms)]
 pub struct AEAD {
     pub ciphertext: Vec<u8>,
     pub tag: Vec<u8>,
@@ -54,10 +56,10 @@ pub fn aes_decrypt(key: &[u8], ct: &AEAD) -> Resultat<Vec<u8>> {
         aad: &ct.aad,
     };
 
-    let out = cipher
-        .decrypt(nonce, payload)
-        .ok()
-        .ifnone("AesGcmDecryptFailed", "AES-GCM decrypt; wrong password or nonce")?;
+    let out = cipher.decrypt(nonce, payload).ok().ifnone(
+        "AesGcmDecryptFailed",
+        "AES-GCM decrypt; wrong password or nonce",
+    )?;
 
     let ha = Blake2b512::digest(&out).to_vec();
     assert_throw!(ha == ct.aad, "AesDecryptIntegrity", "message broken");

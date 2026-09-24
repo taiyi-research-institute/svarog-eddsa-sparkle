@@ -16,7 +16,7 @@ use sha2::{Digest, Sha512};
 use svarog_curve25519::Curve25519;
 use svarog_lagrange::{Keystore, VerifiableSecretSharing};
 
-use crate::aes::{aes_decrypt, aes_encrypt, AEAD};
+use crate::aes::{AEAD, aes_decrypt, aes_encrypt};
 use crate::dlog_proof::{DLogProof, dlog_prove, dlog_verify};
 use crate::make_map;
 use crate::rng::fill_random;
